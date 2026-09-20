@@ -78,7 +78,8 @@ class MapLoader:
                     )
                 nb_drones = int(drones_match.group(1))
                 if nb_drones <= 0:
-                    raise ValueError(f"Error on line {line_num}: nb_drones must be > 0.")
+                    raise ValueError(
+                        f"Error on line {line_num}: nb_drones must be > 0.")
                 elif nb_drones > 1000:
                     raise ValueError("Error on nb_drones: that's a lot.")
                 drones_parsed = True

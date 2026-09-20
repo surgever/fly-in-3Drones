@@ -1,5 +1,4 @@
 import re
-import sys
 import heapq
 from typing import List, Dict, Tuple, Optional, Set, Any
 from elements import Map, ZoneType, DSt, HubRoles
@@ -264,37 +263,24 @@ class MapSimulator:
         return ansi_escape.sub('', text)
 
     def _detect_traps(self) -> bool:
-        paths_to_node: Dict[str, Set[int]] = {}
-        queue: List[Tuple[str, List[str]]] = [(self.start, [self.start])]
-        visited_in_4: Set[str] = set()
+        paths, visited = defaultdict(set), set()
+        queue = deque([(self.start, [self.start])])
 
         while queue:
-            curr, path = queue.pop(0)
-            depth = len(path) - 1
-            paths_to_node.setdefault(curr, set()).add(depth)
-            if depth <= 4:
-                visited_in_4.add(curr)
-            if depth >= 6:
-                continue
+            curr, path = queue.popleft()
+            d = len(path) - 1
+            paths[curr].add(d)
+            if d <= 4:
+                visited.add(curr)
+            if d < 6:
+                queue.extend(
+                    (n, path + [n]) for n in self.map.adjacency[curr]
+                    if n not in path)
 
-            for neighbor in self.map.adjacency[curr]:
-                if neighbor not in path:
-                    queue.append((neighbor, path + [neighbor]))
-
-        congested = [
-            h for h in [n for n, d in paths_to_node.items() if 4 in d]
-            if not {0, 1, 2, 3} & paths_to_node[h]
-            and {5, 6}.issubset(paths_to_node[h])
-        ]
-
-        final_hubs: List[str] = []
-        for hub in congested:
-            valid_restricted = [
-                n for n in self.map.adjacency[hub]
-                if self.map.hubs[n].zone_type == ZoneType.restricted
-                and n not in visited_in_4
-            ]
-            if len(valid_restricted) == 2:
-                final_hubs.append(hub)
-
-        return len(final_hubs) > 0
+        return any(
+            4 in d and not ({0, 1, 2, 3} & d) and {5, 6} <= d and
+            sum(self.map.hubs[n].zone_type ==
+                ZoneType.restricted and n not in visited
+                for n in self.map.adjacency[h]) == 2
+            for h, d in paths.items()
+        )
