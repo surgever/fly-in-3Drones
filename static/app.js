@@ -16,27 +16,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     let currentRenderer = null;
 
     const urlParams = new URLSearchParams(window.location.search);
-    const b64Data = urlParams.get('data');
-    console.log("b64Data",b64Data)
-    if (b64Data) {
-        try {
-            const jsonStr = decodeURIComponent(atob(b64Data).split('').map(function(c) {
-                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-            }).join(''));
-            
-            const simData = JSON.parse(jsonStr);
-            
-            welcomeScreen.style.display = "none";
-            simStats.style.display = "block";
-            mapTitle.innerText = simData.map_name + " (CLI)";
-            
-            initializeThreeJSScene(simData.map_data, simData.timeline);
-            
-            // return; 
-        } catch (e) {
-            console.error("Failed to parse URL simulation data:", e);
-        }
-    }
+    const targetMap = urlParams.get('map');
 
     // Minimize Toggle Logic
     btnMinToggle.addEventListener("click", () => {
@@ -65,12 +45,17 @@ document.addEventListener("DOMContentLoaded", async () => {
             availableMaps = await res.json();
             populateMapList();
         } else {
-            console.log("API exists but failed");
             isStaticMode = true;
-            loadStaticFallback();
+            await loadStaticFallback();
         }
     } catch (e) {
-        loadStaticFallback();
+        isStaticMode = true;
+        await loadStaticFallback();
+    }
+    
+    // Automatically execute the map provided by the CLI
+    if (targetMap) {
+        selectAndRunMap(targetMap, null);
     }
 
     function populateMapList() {
@@ -85,7 +70,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     async function loadStaticFallback() {
-        // Fallback to static JSON file if server is not responding (Mode 3)
         try {
             const res = await fetch("data/map-list.json");
             const data = await res.json();
@@ -98,7 +82,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     async function selectAndRunMap(mapName, element) {
         document.querySelectorAll(".map-item").forEach(el => el.classList.remove("selected"));
-        element.classList.add("selected");
+        if (element) element.classList.add("selected");
         
         currentMap = mapName;
         mapTitle.innerText = mapName.replace(/_/g, " ").replace(".txt", " ");
@@ -112,7 +96,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         
         let response;
         if (isStaticMode) {
-            response = await fetch(`data/maps/${mapName}.json`);
+            response = await fetch(`data/maps/${mapName.replace(".txt","")}.json`);
         } else {
             response = await fetch("/api/simulate", {
                 method: "POST",
@@ -129,17 +113,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         const simData = await response.json();
         
         initializeThreeJSScene(simData.map_data, simData.timeline);
-        console.log("Simulation Ready:", simData);
     }
 
-    // Add this to the bottom of app.js
     function initializeThreeJSScene(mapData, rawTimeline) {
         if (currentAnimationId) {
             cancelAnimationFrame(currentAnimationId);
             currentAnimationId = null;
         }
         if (currentSimAbortController) {
-            currentSimAbortController.abort(); // Destroys all old event listeners
+            currentSimAbortController.abort();
         }
         if (currentRenderer) {
             currentRenderer.dispose();
@@ -166,19 +148,20 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         let state = {
             isPlaying: false, turn: 0, maxTurns: rawTimeline.length - 1,
-            progress: 0.0, speed: 1.0, totalDrones: mapData.drons.length
+            progress: 0.0, speed: 1.0, totalDrones: mapData.drone_number
         };
 
-        const endHub = Object.values(mapData.hubs).find(
-            h => h.role === "end_hub"
-        ).name;
-        const startHub = Object.values(mapData.hubs).find(
-            h => h.role === "start_hub"
-        ).name;
+        const endHub = Object.entries(mapData.hubs).find(
+            ([name, h]) => h.role === "end_hub"
+        )[0];
+        const startHub = Object.entries(mapData.hubs).find(
+            ([name, h]) => h.role === "start_hub"
+        )[0];
         const hubLookup = {};
-        Object.values(mapData.hubs).forEach(h => {
-            hubLookup[h.name.trim()] = h;
+        Object.entries(mapData.hubs).forEach(([hub_name, h]) => {
+            hubLookup[hub_name.trim()] = h;
         });
+        console.log("hubLookup", hubLookup)
 
         function normalizeName(name) {
             if(!name.includes('-')) return name;
@@ -214,16 +197,19 @@ document.addEventListener("DOMContentLoaded", async () => {
             return vec.multiplyScalar(R + radiusOffset);
         }
 
+        const droneIds = Array.from(
+            {length: mapData.drone_number},
+            (_, i) => `D${i+1}`);
         const dronePaths = {};
-        mapData.drons.forEach(d => {
-            dronePaths[d.id] = new Array(state.maxTurns + 1).fill(startHub);
+        
+        droneIds.forEach(id => {
+            dronePaths[id] = new Array(state.maxTurns + 1).fill(startHub);
         });
 
         for(let t = 1; t <= state.maxTurns; t++) {
             const moves = rawTimeline[t];
-            mapData.drons.forEach(d => {
-                dronePaths[d.id][t] = moves[d.id] ?
-                    moves[d.id] : dronePaths[d.id][t-1];
+            droneIds.forEach(id => {
+                dronePaths[id][t] = moves[id] ? moves[id] : dronePaths[id][t-1];
             });
         }
 
@@ -236,16 +222,15 @@ document.addEventListener("DOMContentLoaded", async () => {
                     radiusOffset
                 );
             }
-            console.warn("Warning: Couldn't find coordinates hub:", cleanName);
             return new THREE.Vector3(0, R + radiusOffset, 0); 
         }
 
         const parsedSteps = {};
-        mapData.drons.forEach(d => {
-            parsedSteps[d.id] = [];
+        droneIds.forEach(id => {
+            parsedSteps[id] = [];
             for(let t = 0; t <= state.maxTurns; t++) {
-                let u = dronePaths[d.id][t];
-                let v = dronePaths[d.id][Math.min(t+1, state.maxTurns)];
+                let u = dronePaths[id][t];
+                let v = dronePaths[id][Math.min(t+1, state.maxTurns)];
 
                 let isUTransit = u.includes('-');
                 let isVTransit = v.includes('-');
@@ -265,8 +250,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 } else if (isUTransit && isVTransit) {
                     let futureNode = u;
                     for(let ft = t+1; ft <= state.maxTurns; ft++) {
-                        if(!dronePaths[d.id][ft].includes('-')) {
-                            futureNode = dronePaths[d.id][ft];
+                        if(!dronePaths[id][ft].includes('-')) {
+                            futureNode = dronePaths[id][ft];
                             break;
                         }
                     }
@@ -280,7 +265,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     movePhase = 0;
                 }
 
-                parsedSteps[d.id][t] = {
+                parsedSteps[id][t] = {
                     p1: getHubPos(actualStart, 0.0),
                     p2: getHubPos(actualEnd, 0.0),
                     movePhase: movePhase,
@@ -469,16 +454,15 @@ document.addEventListener("DOMContentLoaded", async () => {
             return group;
         }
 
-        Object.values(mapData.hubs).forEach(hub => {
+        Object.entries(mapData.hubs).forEach(([hub_name, hub]) => {
             const colorKey = hub.color ? hub.color.toLowerCase() : "default";
             const colorHex = PALETTE[colorKey] || PALETTE["default"];
 
-            const maxDrones = hub.max_drones !== undefined ? hub.max_drones: 1;
-            const isRestricted = (
-                (hub.zone_type &&
-                 hub.zone_type.toLowerCase().includes("restricted")) ||
-                hub.is_restricted === true
-            );
+            // Implement defaults stripped from the JSON payload
+            const maxDrones = hub.max_drones !== undefined ? hub.max_drones : 1;
+            const role = hub.role || "hub";
+            const zoneType = hub.zone_type || "normal";
+            const isRestricted = zoneType.toLowerCase().includes("restricted");
 
             const group = createConcentricHub(
                 colorKey, colorHex, maxDrones, isRestricted
@@ -494,12 +478,14 @@ document.addEventListener("DOMContentLoaded", async () => {
             const hitGeo = new THREE.SphereGeometry(4.0 * dynScale, 8, 8);
             const hitMesh = new THREE.Mesh(hitGeo, hitMat);
 
-            hitMesh.userData = { type: 'hub', data: hub, group: group };
+            hitMesh.userData = { type: 'hub', 
+                data: hub, name: hub_name, group: group,
+                role, zoneType, maxDrones };
             group.add(hitMesh);
 
             scene.add(group);
             interactables.push(hitMesh);
-            hubObjects[hub.name] = group;
+            hubObjects[hub_name] = group;
         });
 
         const tubeMat = new THREE.MeshStandardMaterial({
@@ -507,9 +493,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             opacity: 0.08, emissiveIntensity: 0.1
         });
 
-        Object.values(mapData.connections).forEach(conn => {
-            const h1 = mapData.hubs[conn.zone1];
-            const h2 = mapData.hubs[conn.zone2];
+        mapData.connections.forEach(connName => {
+            const parts = connName.split('-');
+            const h1 = mapData.hubs[parts[0]];
+            const h2 = mapData.hubs[parts[1]];
             if(!h1 || !h2) return;
 
             const p1 = mapToSphere(h1.x, h1.y, 0.1);
@@ -525,7 +512,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             );
 
             const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat.clone());
-            const normName = normalizeName(conn.name);
+            const normName = normalizeName(connName);
 
             connectionMeshes[normName] = tubeMesh;
             scene.add(tubeMesh);
@@ -533,7 +520,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         function createDroneGroup() {
             const group = new THREE.Group();
-
             const bGeo = new THREE.BoxGeometry(2.0, 0.5, 2.0);
             const bMat = new THREE.MeshStandardMaterial({
                 color: 0xeef2f5, metalness: 0.4, roughness: 0.6
@@ -559,14 +545,14 @@ document.addEventListener("DOMContentLoaded", async () => {
             return group;
         }
 
-        mapData.drons.forEach((d, idx) => {
+        droneIds.forEach((id) => {
             const group = createDroneGroup();
-            group.userData = { type: 'drone', id: d.id };
+            group.userData = { type: 'drone', id: id };
             scene.add(group);
             interactables.push(group.children[0]);
             group.children[0].userData = group.userData;
 
-            droneMeshes[d.id] = group;
+            droneMeshes[id] = group;
 
             const startPos = mapToSphere(
                 mapData.hubs[startHub].x,
@@ -585,9 +571,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         function updateCamera() {
             if (introAnimationActive) {
-                // Increase rate so the intro finishes faster and playback starts sooner
                 zoomLevel += (targetZoom.value - zoomLevel) * 0.18;
-                // Loosen threshold so we exit intro earlier
                 if (Math.abs(zoomLevel - targetZoom.value) < 0.01) {
                     introAnimationActive = false;
                     state.isPlaying = true;
@@ -673,10 +657,10 @@ document.addEventListener("DOMContentLoaded", async () => {
                 tooltip.style.display = 'block';
 
                 if(obj.userData.type === 'hub') {
-                    const h = obj.userData.data;
-                    const mx = h.max_drones > 9000 ? '∞' : h.max_drones;
+                    const h = obj.userData;
+                    const mx = h.maxDrones > 9000 ? '∞' : h.maxDrones;
                     tooltip.innerHTML = `<div class="tooltip-title">
-                        ${h.name}</div>Zone: ${h.zone_type}<br>
+                        ${h.name}</div>Zone: ${h.zoneType}<br>
                         Max Cap: ${mx}`;
                 } else if(obj.userData.type === 'drone') {
                     tooltip.innerHTML = `<div class="tooltip-title">
@@ -784,8 +768,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             const activeConnections = new Set();
             const subtleConnections = new Set();
 
-            mapData.drons.forEach((d) => {
-                const step = parsedSteps[d.id][tSafe];
+            droneIds.forEach((id) => {
+                const step = parsedSteps[id][tSafe];
 
                 if (step.startName === endHub) {
                     deliveredCount++;
@@ -796,7 +780,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
 
                 const currentLogicalNode = (state.progress >= 1.0) ?
-                    dronePaths[d.id][Math.min(tSafe + 1, state.maxTurns)] :
+                    dronePaths[id][Math.min(tSafe + 1, state.maxTurns)] :
                     step.rawStart;
                 activeNodes.add(normalizeName(currentLogicalNode));
 
@@ -818,16 +802,16 @@ document.addEventListener("DOMContentLoaded", async () => {
                     }
                 }
 
-                const mesh = droneMeshes[d.id];
+                const mesh = droneMeshes[id];
                 applyFlightPos(mesh, step, state.progress);
             });
 
-            Object.values(mapData.hubs).forEach(h => {
-                const hg = hubObjects[h.name];
-                const isActive = activeNodes.has(normalizeName(h.name));
+            Object.entries(mapData.hubs).forEach(([hub_name, h]) => {
+                const hg = hubObjects[hub_name];
+                const isActive = activeNodes.has(normalizeName(hub_name));
                 const isHovered = hoveredObject &&
                     hoveredObject.userData.type === 'hub' &&
-                    hoveredObject.userData.data.name === h.name;
+                    hoveredObject.userData.data.name === hub_name;
 
                 const tgtAct = (isActive || isHovered) ? 1.0 : 0.0;
                 const spd = delta * 6.0;
@@ -863,8 +847,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 });
             });
 
-            Object.values(mapData.connections).forEach(c => {
-                const normName = normalizeName(c.name);
+            mapData.connections.forEach(connName => {
+                const normName = normalizeName(connName);
                 const tm = connectionMeshes[normName];
 
                 if (tm) {
