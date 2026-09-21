@@ -3,15 +3,16 @@ import sys
 import json
 import argparse
 import webbrowser
-import uvicorn
-from typing import Any
 import socket
 import urllib.parse
 import subprocess
 import time
+from typing import Any, Dict
 from dotenv import load_dotenv
-from server import app, generate_simulation_payload
 
+from agents.MapLoader import MapLoader
+from agents.MapSimulator import MapSimulator
+from server import SimulationServer
 
 load_dotenv()
 
@@ -24,53 +25,68 @@ def is_server_running(host: str, port: int) -> bool:
 
 
 def parse_arguments() -> argparse.Namespace:
-    """Parses command-line arguments for the simulation engine."""
     parser = argparse.ArgumentParser(description="Fly-in Simulation System")
-    parser.add_argument("-i", "--input", type=str, help="Path to  map file.")
+    parser.add_argument("-i", "--input", type=str, help="Path to map file.")
     parser.add_argument("--serve", action="store_true", help="Start server.")
-    parser.add_argument("--ssserve", action="store_true", help="Silent serv.")
-    parser.add_argument("-hide-turns", action="store_true", help="Hid turns.")
+    parser.add_argument("--ssserve", action="store_true", help="Silent serve.")
+    parser.add_argument("-hide-turns", action="store_true", help="Hide turns.")
     parser.add_argument("-visual", action="store_true", help="Open frontend.")
     parser.add_argument("-export-json", action="store_true", help="Export.")
     return parser.parse_args()
 
 
-def export_simulation_data(map_name: str, payload: dict[str, Any]) -> None:
-    """Formats and exports the simulation run to a static JSON file."""
-    os.makedirs(os.path.join("static", "data", "maps"), exist_ok=True)
+class LocalRunner:
+    """Manages CLI-based map simulations and visualizations."""
+    
+    def __init__(self, args: argparse.Namespace):
+        self.args = args
 
-    out_path = os.path.join(
-        "static", "data", "maps", f"{map_name.replace('.txt', '')}.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
-    print(f"Exported JSON to {out_path}")
+    def run_single(self, filepath: str) -> None:
+        rel_map_name = filepath.replace("\\", "/")
+        if rel_map_name.startswith("maps/"):
+            rel_map_name = rel_map_name[5:]
+        else:
+            rel_map_name = os.path.basename(filepath)
 
+        try:
+            sim_map = MapLoader.load_map(filepath)
+            if not sim_map:
+                raise ValueError("Failed to parse map")
+            engine = MapSimulator(sim_map)
+            result = engine.run()
+            if not result:
+                raise ValueError("Deadlock detected")
+            total_turns, turns_output = result
+            payload = engine.generate_payload(
+                rel_map_name, total_turns, turns_output)
+        except Exception as e:
+            print(f"Failed to load map {rel_map_name}: {e}", file=sys.stderr)
+            return
 
-def run_single_simulation(args: argparse.Namespace, filepath: str) -> None:
-    """Executes a single simulation instance based on CLI flags."""
-    rel_map_name = filepath.replace("\\", "/")
-    if rel_map_name.startswith("maps/"):
-        rel_map_name = rel_map_name[5:]
-    else:
-        rel_map_name = os.path.basename(filepath)
+        print(f"\n= Flying: {rel_map_name} =")
+        if not self.args.hide_turns:
+            print(payload["turns_output"])
+        print(f"Number of turns taken: {payload['total_turns']}")
 
-    try:
-        payload = generate_simulation_payload(filepath, rel_map_name)
-    except Exception as e:
-        print(f"Failed to load map {rel_map_name}: {e}", file=sys.stderr)
-        return
+        if self.args.export_json or self.args.visual:
+            compressed_str = engine.generate_compressed_string(
+                rel_map_name, turns_output)
+            safe_str = urllib.parse.quote(compressed_str)
+            if self.args.export_json:
+                self._export_data(rel_map_name, safe_str)
+            if self.args.visual:
+                self._push_visual(safe_str)
 
-    print(f"\n= Flying: {rel_map_name} =")
-    if not args.hide_turns:
-        print(payload["turns_output"])
-    print(f"Number of turns taken: {payload['total_turns']}")
+    def _export_data(self, map_name: str, sim_data: str) -> None:
+        os.makedirs(os.path.join("static", "data", "maps"), exist_ok=True)
+        out_path = os.path.join(
+            "static", "data", "maps", map_name.replace(".txt",".data")
+        )
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(sim_data)
+        print(f"Exported JSON to {out_path}")
 
-    if args.export_json:
-        export_payload = payload.copy()
-        del export_payload["turns_output"]
-        export_simulation_data(rel_map_name, export_payload)
-
-    if args.visual:
+    def _push_visual(self, sim_data: str) -> None:
         api_host = os.getenv("API_HOST")
         if not api_host:
             api_host = "http://127.0.0.1:8080"
@@ -79,38 +95,33 @@ def run_single_simulation(args: argparse.Namespace, filepath: str) -> None:
                 subprocess.Popen([sys.executable, "fly_in.py", "--ssserve"])
                 time.sleep(2.5)
 
-        safe_map = urllib.parse.quote(rel_map_name)
-        target_url = f"{api_host}/?map={safe_map}"
+        target_url = f"{api_host}/?data={sim_data}"
         print(f"=> Pushing visualization to {api_host}")
         webbrowser.open(target_url)
 
 
 def main() -> None:
-    """Main orchestration function for CLI or Server execution."""
     args = parse_arguments()
 
     if args.serve or args.ssserve:
-        if args.serve:
-            webbrowser.open("http://127.0.0.1:8080")
-        uvicorn.run(
-            app, host="127.0.0.1",
-            port=8080, log_level="info",
-            access_log=False
-            )
+        server = SimulationServer(port=8080, silent=args.ssserve)
+        server.start()
         return
 
     if not args.input:
         print("Error: Must provide an input map with -i", file=sys.stderr)
         sys.exit(1)
 
+    runner = LocalRunner(args)
+
     if os.path.isdir(args.input):
         for filename in os.listdir(args.input):
             if filename.endswith(".txt"):
                 path = os.path.join(args.input, filename)
                 print(f"\nRunning {path}...")
-                run_single_simulation(args, path)
+                runner.run_single(path)
     else:
-        run_single_simulation(args, args.input)
+        runner.run_single(args.input)
 
 
 if __name__ == "__main__":
@@ -120,7 +131,4 @@ if __name__ == "__main__":
         print("\nProgram terminated by user.")
     except ValueError as e:
         print(e, file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print("\nProgram terminated:", e)
         sys.exit(1)
