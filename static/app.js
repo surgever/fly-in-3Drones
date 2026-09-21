@@ -17,6 +17,23 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const urlParams = new URLSearchParams(window.location.search);
     const targetMap = urlParams.get('map');
+    const rawData = urlParams.get('data');
+
+    if (rawData) {
+        try {
+            const decodedString = decodeURIComponent(rawData);
+            data = reconstruct_data(decodedString);
+            
+            welcomeScreen.style.display = "none";
+            hudContainer.classList.remove("selecting");
+            mapTitle.innerText = data.mapName.replace(".txt","");
+            
+            // Render directly, no extra API calls needed
+            initializeThreeJSScene(data, data.rawTimeline);
+        } catch (e) {
+            console.error("Failed to parse custom URL protocol:", e);
+        }
+    }
 
     // Minimize Toggle Logic
     btnMinToggle.addEventListener("click", () => {
@@ -28,14 +45,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Map Selector Dropdown Logic
     btnToggleMaps.addEventListener("click", () => {
         if (hudContainer.classList.contains("minimized")) return;
-        const isActive = mapDropdown.classList.toggle("active");
-        mapChevron.classList.toggle("open", isActive);
-        
-        if (isActive) {
-            simStats.style.display = "none";
-        } else if (currentMap) {
-            simStats.style.display = "block";
-        }
+        hudContainer.classList.toggle("selecting");
     });
 
     // Fetch maps via API
@@ -58,12 +68,77 @@ document.addEventListener("DOMContentLoaded", async () => {
         selectAndRunMap(targetMap, null);
     }
 
+    function reconstruct_data(rawData) {
+        const parts = rawData.split('~');
+        const mapName = parts[0].replace(/_/g, ' ');
+        const numDrones = parseInt(parts[1], 10);
+        // Reconstruct Hubs
+        const hubs = {};
+        const hubStr = parts[2]; // Remove "hubs:"
+        if (hubStr) {
+            hubStr.split('/').forEach(h => {
+                console.log("hub: " + h);
+                const [name, props] = h.split('.');
+                const [x, y, flags, color] = props.split('_');
+                
+                let role = "hub";
+                let maxDrones = 1;
+                if (flags.includes('s')) { role = "start_hub"; maxDrones = 999999; }
+                else if (flags.includes('e')) { role = "end_hub"; maxDrones = 999999; }
+                
+                let zoneType = "normal";
+                if (flags.includes('r')) zoneType = "restricted";
+                else if (flags.includes('b')) zoneType = "blocked";
+                else if (flags.includes('p')) zoneType = "priority";
+                
+                const capMatch = flags.match(/\d+/);
+                if (capMatch && !flags.includes('s') && !flags.includes('e')) {
+                    maxDrones = parseInt(capMatch[0], 10);
+                }
+
+                hubs[name] = { 
+                    x: parseFloat(x), 
+                    y: parseFloat(y), 
+                    role, 
+                    zone_type: zoneType, 
+                    max_drones: maxDrones, 
+                    color: color 
+                };
+            });
+        }
+        // Reconstruct Connections
+        const connections = parts[3].split('.');
+        // Reconstruct Timeline
+        const rawTimeline = [{}]; 
+        const turnsStr = parts[4];
+        if (turnsStr) {
+            turnsStr.split('/').forEach(turn => {
+                const turnMoves = {};
+                turn.split('.').forEach(move => {
+                    const dashIdx = move.indexOf('-');
+                    if(dashIdx !== -1) {
+                        turnMoves[move.substring(0, dashIdx)] = move.substring(dashIdx + 1);
+                    }
+                });
+                rawTimeline.push(turnMoves);
+            });
+        }
+
+        return {
+            mapName: mapName,
+            drone_number: numDrones,
+            hubs: hubs,
+            connections: connections,
+            rawTimeline: rawTimeline
+        };
+    }
+
     function populateMapList() {
         mapDropdown.innerHTML = "";
         availableMaps.forEach(mapName => {
             const div = document.createElement("div");
             div.className = "map-item";
-            div.innerText = mapName.replace(".json", "");
+            div.innerText = mapName.replace(".txt", "");
             div.onclick = () => selectAndRunMap(mapName, div);
             mapDropdown.appendChild(div);
         });
@@ -81,7 +156,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     async function selectAndRunMap(mapName, element) {
-        document.querySelectorAll(".map-item").forEach(el => el.classList.remove("selected"));
+        document.querySelectorAll(".map-item").forEach(
+            el => el.classList.remove("selected"));
         if (element) element.classList.add("selected");
         
         currentMap = mapName;
@@ -91,28 +167,39 @@ document.addEventListener("DOMContentLoaded", async () => {
         
         welcomeScreen.style.opacity = "0";
         setTimeout(() => welcomeScreen.style.display = "none", 500);
-        
-        simStats.style.display = "block";
+        hudContainer.classList.remove("selecting");
         
         let response;
         if (isStaticMode) {
-            response = await fetch(`data/maps/${mapName.replace(".txt","")}.json`);
+            response = await fetch(`data/maps/${mapName}.data`);
+            if (!response.ok) {
+                console.error("Server returned an error:", response.status);
+                return;
+            }
+            try {
+                response = await response.text();
+                const data = reconstruct_data(response);
+                welcomeScreen.style.display = "none";
+                hudContainer.classList.remove("selecting");
+                mapTitle.innerText = data.mapName.replace(".txt","");
+                initializeThreeJSScene(data, data.rawTimeline);
+            } catch (e) {
+                console.error("Failed to parse custom URL protocol:", e);
+            }
         } else {
             response = await fetch("/api/simulate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ map_name: mapName })
             });
+            if (!response.ok) {
+                console.error("Server returned an error:", response.status);
+                return;
+            }
+            const simData = await response.json();
+            initializeThreeJSScene(simData.map_data, simData.timeline);
         }
 
-        if (!response.ok) {
-            console.error("Server returned an error:", response.status);
-            return;
-        }
-        
-        const simData = await response.json();
-        
-        initializeThreeJSScene(simData.map_data, simData.timeline);
     }
 
     function initializeThreeJSScene(mapData, rawTimeline) {
@@ -133,6 +220,30 @@ document.addEventListener("DOMContentLoaded", async () => {
         const existingCanvas = document.querySelector('canvas');
         if (existingCanvas) {
             existingCanvas.remove();
+        } 
+
+        if (typeof rawTimeline == "string") {
+            rawTimelineString = rawTimeline;
+            rawTimeline = [{}]; // Turn 0 is always empty
+            if (rawTimelineString) {
+                const lines = rawTimelineString.trim().split('\n');
+                for (const line of lines) {
+                    if (!line || line.startsWith("Numbers")) continue;
+                    
+                    const turnMoves = {};
+                    const moves = line.trim().split(/\s+/);
+                    
+                    for (const move of moves) {
+                        const dashIdx = move.indexOf('-');
+                        if (dashIdx !== -1) {
+                            const droneId = move.substring(0, dashIdx);
+                            const dest = move.substring(dashIdx + 1);
+                            turnMoves[droneId] = dest;
+                        }
+                    }
+                    rawTimeline.push(turnMoves);
+                }
+            }
         }
 
         const R = 200;
@@ -164,6 +275,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         console.log("hubLookup", hubLookup)
 
         function normalizeName(name) {
+            if (!name) return "";
             if(!name.includes('-')) return name;
             const pts = name.split('-');
             return pts[0] < pts[1] ?

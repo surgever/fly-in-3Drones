@@ -284,3 +284,62 @@ class MapSimulator:
                 for n in self.map.adjacency[h]) == 2
             for h, d in paths.items()
         )
+
+    def generate_compressed_string(
+            self, map_name: str, turns_output: str) -> str:
+        """Serializes the map and timeline into a custom compressed string."""
+        part1 = map_name.replace(" ", "_")
+        part2 = f"{len(self.map.drons)}"
+        hub_strs = []
+        for h in self.map.hubs.values():
+            role = ("s" if h.role.value == "start_hub"
+                    else "e" if h.role.value == "end_hub" else "")
+            ztype = ("r" if h.zone_type.value == "restricted"
+                     else "b" if h.zone_type.value == "blocked" 
+                     else "p" if h.zone_type.value == "priority" else "")
+            cap = ("" if h.max_drones == 1
+                   or role in ("s", "e") else str(h.max_drones))
+            flags = f"{role}{ztype}{cap}"
+            color = h.color if h.color else "default"
+            hub_strs.append(f"{h.name}.{h.x}_{h.y}_{flags}_{color}")
+        part3 = f"{'/'.join(hub_strs)}"
+        part4 = f"{'.'.join(self.map.connections.keys())}"
+        clean_turns = self.clean_ansi_codes(turns_output).strip()
+        valid_lines = [
+            line.strip().replace(" ", ".") 
+            for line in clean_turns.split('\n') 
+            if line and not line.startswith("Numbers")
+        ]
+        part5 = '/'.join(valid_lines)
+        return f"{part1}~{part2}~{part3}~{part4}~{part5}"
+
+    def generate_payload(
+        self, map_name: str, total_turns: int, turns_output: str
+    ) -> Dict[str, Any]:
+        """Formats a minimized payload."""
+        hubs: Dict[str, Any] = {}
+        for h_name, h in self.map.hubs.items():
+            h_data: Dict[str, Any] = {"x": h.x, "y": h.y}
+            if h.role.value != "hub":
+                h_data["role"] = h.role.value
+            if h.zone_type.value != "normal":
+                h_data["zone_type"] = h.zone_type.value
+            if h.max_drones != 1:
+                h_data["max_drones"] = h.max_drones
+            if h.color:
+                h_data["color"] = h.color
+            hubs[h_name] = h_data
+
+        map_data = {
+            "drone_number": len(self.map.drons),
+            "hubs": hubs,
+            "connections": list(self.map.connections.keys())
+        }
+        clean_output = self.clean_ansi_codes(turns_output)
+        return {
+            "map_name": map_name,
+            "map_data": map_data,
+            "timeline": clean_output.strip(),
+            "total_turns": total_turns,
+            "turns_output": turns_output
+        }
