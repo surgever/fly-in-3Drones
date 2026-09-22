@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Set
 from pydantic import ValidationError
 from elements import Map, Hub, Connection, Dron, HubRoles, ZoneType
 import sys
@@ -72,12 +72,12 @@ class MapLoader:
         )
         drones_pattern = r"^nb_drones\s*:\s*(\d+)$"
 
+        used_hub_coord: Set[str] = set()
         for line_num, line in enumerate(lines, start=1):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
 
-            # 1. Analizar nb_drones
             if not drones_parsed:
                 drones_match = re.fullmatch(drones_pattern, line)
                 if not drones_match:
@@ -94,7 +94,6 @@ class MapLoader:
                 drones_parsed = True
                 continue
 
-            # 2. Analizar Zonas (Hubs)
             hub_match = re.fullmatch(hub_pattern, line)
             if hub_match:
                 role_str, name, x, y, meta_str = hub_match.groups()
@@ -104,6 +103,13 @@ class MapLoader:
                         f"Error on line {line_num}: Zone '{name}' "
                         "is already defined."
                     )
+                if f"{x},{y}" in used_hub_coord:
+                    raise ValueError(
+                        f"Error on line {line_num}: Zone '{name}' "
+                        "coordinates are occupied."
+                    )
+                else:
+                    used_hub_coord.add(f"{x},{y}")
                 meta = cls._parse_metadata(meta_str) if meta_str else {}
 
                 try:
@@ -153,7 +159,6 @@ class MapLoader:
                 adjacency[name] = []
                 continue
 
-            # 3. Analizar Conexiones
             conn_match = re.fullmatch(conn_pattern, line)
             if conn_match:
                 z1, z2, meta_str = conn_match.groups()
