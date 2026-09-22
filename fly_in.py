@@ -26,7 +26,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--ssserve", action="store_true", help="Silent serve.")
     parser.add_argument("-hide-turns", action="store_true", help="Hide turns.")
     parser.add_argument("-visual", action="store_true", help="Open frontend.")
-    parser.add_argument("-export-json", action="store_true", help="Export.")
+    parser.add_argument("-export", action="store_true", help="Export.")
     return parser.parse_args()
 
 
@@ -67,11 +67,11 @@ class LocalRunner:
             print(payload["turns_output"])
         print(f"Number of turns taken: {payload['total_turns']}")
 
-        if self.args.export_json or self.args.visual:
+        if self.args.export or self.args.visual:
             compressed_str = engine.generate_compressed_string(
                 rel_map_name, turns_output)
             safe_str = urllib.parse.quote(compressed_str)
-            if self.args.export_json:
+            if self.args.export:
                 self._export_data(rel_map_name, safe_str)
             if self.args.visual:
                 self._push_visual(safe_str)
