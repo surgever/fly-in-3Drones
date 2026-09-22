@@ -18,7 +18,7 @@ class HubRoles(str, Enum):
 
 class Hub(BaseModel):
     """Stores hub config and state."""
-    name: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1, pattern=r"^[a-zA-Z0-9_]+$")
     x: int
     y: int
     role: HubRoles

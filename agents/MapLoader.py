@@ -23,14 +23,23 @@ class MapLoader:
         metadata: Dict[str, str] = {}
         if not metadata_str:
             return metadata
+        match_metadata = re.fullmatch(r"([^\[\]]+)", metadata_str)
+        if not match_metadata:
+            raise ValueError("Invalid metadata format: extra brackets")
+
         metadata_str = metadata_str.strip("[]")
+
         parts = metadata_str.split()
         for part in parts:
             if "=" in part:
                 key, val = part.split("=", 1)
+                val_match = re.fullmatch(r"([\w\-]+)", val)
+                if not val_match or key not in {
+                        "max_drones", "color", "max_link_capacity", "zone"}:
+                    raise ValueError("Invalid metadata: wrong meta")
                 metadata[key] = val
             else:
-                metadata[part] = "True"
+                raise ValueError("Invalid metadata format: missing equal")
         return metadata
 
     @classmethod
