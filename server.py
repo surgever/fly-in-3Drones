@@ -18,7 +18,7 @@ class SimRequest(BaseModel):
 
 class SimulationServer:
     """Encapsulates the FastAPI application and Three.js routing."""
-    
+
     def __init__(self, port: int = 8080, silent: bool = False):
         self.port = port
         self.silent = silent
@@ -70,7 +70,7 @@ class SimulationServer:
                 sim_map = MapLoader.load_map(map_path)
                 if not sim_map:
                     raise ValueError("Failed to parse map")
-                
+
                 engine = MapSimulator(sim_map)
                 result = engine.run()
                 if not result:
@@ -103,7 +103,7 @@ class SimulationServer:
         if not self.silent:
             webbrowser.open(f"http://127.0.0.1:{self.port}")
         uvicorn.run(
-            self.app, host="127.0.0.1", 
-            port=self.port, log_level="info", 
+            self.app, host="127.0.0.1",
+            port=self.port, log_level="info",
             access_log=False
         )

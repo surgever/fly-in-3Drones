@@ -295,7 +295,7 @@ class MapSimulator:
             role = ("s" if h.role.value == "start_hub"
                     else "e" if h.role.value == "end_hub" else "")
             ztype = ("r" if h.zone_type.value == "restricted"
-                     else "b" if h.zone_type.value == "blocked" 
+                     else "b" if h.zone_type.value == "blocked"
                      else "p" if h.zone_type.value == "priority" else "")
             cap = ("" if h.max_drones == 1
                    or role in ("s", "e") else str(h.max_drones))
@@ -306,8 +306,8 @@ class MapSimulator:
         part4 = f"{'.'.join(self.map.connections.keys())}"
         clean_turns = self.clean_ansi_codes(turns_output).strip()
         valid_lines = [
-            line.strip().replace(" ", ".") 
-            for line in clean_turns.split('\n') 
+            line.strip().replace(" ", ".")
+            for line in clean_turns.split('\n')
             if line and not line.startswith("Numbers")
         ]
         part5 = '/'.join(valid_lines)

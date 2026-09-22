@@ -1,18 +1,13 @@
 import os
 import sys
-import json
 import argparse
 import webbrowser
 import socket
 import urllib.parse
 import subprocess
 import time
-from typing import Any, Dict
 from dotenv import load_dotenv
 
-from agents.MapLoader import MapLoader
-from agents.MapSimulator import MapSimulator
-from server import SimulationServer
 
 load_dotenv()
 
@@ -37,11 +32,15 @@ def parse_arguments() -> argparse.Namespace:
 
 class LocalRunner:
     """Manages CLI-based map simulations and visualizations."""
-    
+
     def __init__(self, args: argparse.Namespace):
         self.args = args
 
     def run_single(self, filepath: str) -> None:
+
+        from agents.MapLoader import MapLoader
+        from agents.MapSimulator import MapSimulator
+
         rel_map_name = filepath.replace("\\", "/")
         if rel_map_name.startswith("maps/"):
             rel_map_name = rel_map_name[5:]
@@ -80,7 +79,7 @@ class LocalRunner:
     def _export_data(self, map_name: str, sim_data: str) -> None:
         os.makedirs(os.path.join("static", "data", "maps"), exist_ok=True)
         out_path = os.path.join(
-            "static", "data", "maps", map_name.replace(".txt",".data")
+            "static", "data", "maps", map_name.replace(".txt", ".data")
         )
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(sim_data)
@@ -100,13 +99,15 @@ class LocalRunner:
         webbrowser.open(target_url)
 
 
-def main() -> None:
+def main() -> int:
     args = parse_arguments()
 
     if args.serve or args.ssserve:
+        from server import SimulationServer
+
         server = SimulationServer(port=8080, silent=args.ssserve)
         server.start()
-        return
+        return 1
 
     if not args.input:
         print("Error: Must provide an input map with -i", file=sys.stderr)
@@ -122,13 +123,18 @@ def main() -> None:
                 runner.run_single(path)
     else:
         runner.run_single(args.input)
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         print("\nProgram terminated by user.")
+        sys.exit(1)
     except ValueError as e:
         print(e, file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Program terminated: {e}", file=sys.stderr)
         sys.exit(1)
