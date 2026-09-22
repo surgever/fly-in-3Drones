@@ -66,6 +66,81 @@ make clean
 **Removes** temporary artifacts, cache and other unnecessary folders and files. This removes generated caches and the local virtual environment.
 
 
+## Maps
+
+Map files are stored in plain text with a special syntax.
+
+### Blueprint
+```txt
+nb_drones: 10
+
+start_hub/hub/end_hub: base 0 0 [color=red]
+hub: midpoint 1 0 [zone=normal|priority|restricted|blocked max_drones=2]
+end_hub: destination 2 0 [color=green]
+
+connection: base-midpoint [max_link_capacity=2]
+connection: midpoint-destination
+```
+
+### Examples
+These maps exemplify criteria to consider:
+
+#### Example 1
+
+<img src="img/example-1.png" alt="example" width="280px" align="right" />
+
+```txt
+nb_drones: 1
+start_hub: start 0 0
+hub: a 5 2 [zone=restricted color=red]
+hub: b1 3 -2 [zone=priority color=green]
+hub: b2 7 -2 [zone=priority color=green]
+end_hub: end 10 0
+connection: start-a
+connection: a-end
+connection: start-b1
+connection: b1-b2
+connection: b2-end
+```
+
+The drones should take route b because it has priority. The BFS [Breadth First Search ](https://www.geeksforgeeks.org/dsa/breadth-first-search-or-bfs-for-a-graph/) algorithm wrongly directs by route a because it has one step less. On the other side, a weighted Dijkstra algorithm takes into account that path a has restricted zones which use double turns (so both paths actually take 3 turns to reach the end) and that path b has priority zone discounts.
+
+----
+
+#### Example 2
+
+<img src="img/example-2.png" alt="example" width="280px" align="right" />
+
+```txt
+nb_drones: 2
+start_hub: start 0 0
+hub: a 5 2 [max_drones=1 color=blue]
+hub: b 5 -2 [max_drones=1 color=yellow]
+end_hub: end 10 0
+connection: start-a
+connection: a-end
+connection: start-b
+connection: b-end
+```
+
+Both drones should depart and arrive at the same time. The algorithm schedule paths to maximize capacity by distributing drones across multiple paths. A bad algorithm could send every drone to the same "best" path, which causes bottlenecks. Instead the algorithm adds a micro-penalty to occupied nodes to naturally split traffic. In the simulation D1 picks a, when D2 calculates its route detects that a is occupied and has a higher cost so dynamically routes via b.
+
+#### Example 3
+
+<img src="img/example-1.png" alt="example" width="280px" align="right" />
+
+```txt
+nb_drones: 2
+start_hub: start 0 0
+hub: restr 5 0 [zone=restricted]
+end_hub: end 10 0
+connection: start-restr
+connection: restr-end
+```
+
+The second drone can not enter the restricted area until the first drone has left it. After the first turn the drone 1 is still in transit to restr. A mistake could make that drone 2 depart because the restr hub is not occupied. Therefore we must take into account that the middle hub has one drone in transit so they cant accept another occupant.
+
+
 ## API and communication
 
 The backend is powered by FastAPI and serves both the frontend and the simulation API.
@@ -160,87 +235,6 @@ restricted_tunnel1.4_0_r2_red
 <td>Length: <strong>30</strong> chars</td>
 </tr></table>
 
-
-## Maps
-
-Map files are stored in plain text with a special syntax.
-
-### Blueprint
-```txt
-nb_drones: 10
-
-start_hub/hub/end_hub: base 0 0 [color=red]
-hub: midpoint 1 0 [zone=normal|priority|restricted|blocked max_drones=2]
-end_hub: destination 2 0 [color=green]
-
-connection: base-midpoint [max_link_capacity=2]
-connection: midpoint-destination
-```
-
-### Examples
-These maps exemplify criteria to consider:
-
-<table width="100%" vertical-align="top" align="center"><tr>
-<td width="25%" vertical-align="top">
-
-```txt
-nb_drones: 1
-start_hub: start 0 0
-hub: a 5 2 [zone=restricted color=red]
-hub: b1 3 -2 [zone=priority color=green]
-hub: b2 7 -2 [zone=priority color=green]
-end_hub: end 10 0
-connection: start-a
-connection: a-end
-connection: start-b1
-connection: b1-b2
-connection: b2-end
-```
-</td><td align="right">
-<img src="img/example-1.png" alt="example" />
-</td></tr></table>
-
-**Example 1.**
-The drones should take route b because it has priority. The BFS [Breadth First Search ](https://www.geeksforgeeks.org/dsa/breadth-first-search-or-bfs-for-a-graph/) algorithm wrongly directs by route a because it has one step less. On the other side, a weighted Dijkstra algorithm takes into account that path a has restricted zones which use double turns (so both paths actually take 3 turns to reach the end) and that path b has priority zone discounts.
-
-<table width="100%" align="center"><tr>
-<td width="25%" vertical-align="top">
-
-```txt
-nb_drones: 2
-start_hub: start 0 0
-hub: a 5 2 [max_drones=1 color=blue]
-hub: b 5 -2 [max_drones=1 color=yellow]
-end_hub: end 10 0
-connection: start-a
-connection: a-end
-connection: start-b
-connection: b-end
-```
-</td><td align="right">
-<img src="img/example-2.png" alt="example" />
-</td></tr></table>
-
-**Example 2.** 
-Both drones should depart and arrive at the same time. The algorithm schedule paths to maximize capacity by distributing drones across multiple paths. A bad algorithm could send every drone to the same "best" path, which causes bottlenecks. Instead the algorithm adds a micro-penalty to occupied nodes to naturally split traffic. In the simulation D1 picks a, when D2 calculates its route detects that a is occupied and has a higher cost so dynamically routes via b.
-
-<table width="100%" align="center"><tr>
-<td width="25%" vertical-align="top">
-
-```txt
-nb_drones: 2
-start_hub: start 0 0
-hub: restr 5 0 [zone=restricted]
-end_hub: end 10 0
-connection: start-restr
-connection: restr-end
-```
-</td><td align="right">
-<img src="img/example-3.png" alt="example" />
-</td></tr></table>
-
-**Example 3.** 
-The second drone can not enter the restricted area until the first drone has left it. After the first turn the drone 1 is still in transit to restr. A mistake could make that drone 2 depart because the restr hub is not occupied. Therefore we must take into account that the middle hub has one drone in transit so they cant accept another occupant.
 
 ## Algorithm
 The core pathfinding engine relies on a custom implementation of a **Dynamic Dijkstra** algorithm. 
