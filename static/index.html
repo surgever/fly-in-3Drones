@@ -109,6 +109,16 @@
             border: 1px solid var(--border-color); border-radius: 4px; max-height: 250px;
             overflow-y: auto; padding: 5px 0;
         }
+        @media (max-width: 1024px) {
+            #hud-container {width: 180px; padding: 10px; min-height: 100px;}
+            .hud-header {font-size: 11px; gap: 4px;}
+            .stat-row {font-size: 8px;}
+            .hud-content {margin-top: 5px;}
+            .controls {margin-top: 10px;}
+            .controls button {padding: 6px 0;}
+            #map-dropdown {max-height: 180px;}
+            .map-item {padding: 6px; font-size: 9px;}
+        }
         
         .map-item {
             padding: 8px 15px; cursor: pointer; font-size: 13px;
